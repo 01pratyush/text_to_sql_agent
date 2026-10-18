@@ -1,22 +1,24 @@
-import json
-import os
 import sys
 from datetime import datetime
 
 from dotenv import load_dotenv
-from groq import Groq
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.tools import tool
+from langchain_groq import ChatGroq
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.errors import GraphRecursionError
+from langgraph.graph import START, MessagesState, StateGraph
+from langgraph.prebuilt import ToolNode, tools_condition
 
 load_dotenv()
 
 # Windows consoles default to cp1252, which can't print some characters LLMs emit
 sys.stdout.reconfigure(encoding="utf-8")
 
-client = Groq(
-    api_key=os.environ.get("GROQ_API_KEY"),
-)
-
 MODEL = "openai/gpt-oss-120b"
-MAX_TOOL_ITERATIONS = 5  # safety limit for the inner (tool) loop
+# Safety limit for the inner loop. Counts graph steps (node runs), not loop
+# rounds: agent + tools = 2 steps per round, so 10 allows ~5 rounds
+RECURSION_LIMIT = 10
 
 SYSTEM_PROMPT = (
     "You are a helpful assistant. "
@@ -26,125 +28,82 @@ SYSTEM_PROMPT = (
 
 
 # ---------------------------------------------------------------------------
-# Tools: plain Python functions the model can ask us to run
+# Tools: @tool turns each function into a tool object and builds its JSON
+# schema from the name, type hints and docstring (replaces the TOOLS list)
 # ---------------------------------------------------------------------------
 
+@tool
 def get_current_time() -> str:
-    """Return the current local date and time."""
+    """Get the current local date and time."""
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+# parse_docstring=True reads the Args: section into per-parameter descriptions
+@tool(parse_docstring=True)
 def add_numbers(a: float, b: float) -> float:
-    """Add two numbers."""
+    """Add two numbers and return the sum.
+
+    Args:
+        a: First number
+        b: Second number
+    """
     return a + b
 
 
-# Maps the tool name the model uses -> the Python function we run
-AVAILABLE_TOOLS = {
-    "get_current_time": get_current_time,
-    "add_numbers": add_numbers,
-}
-
-# Tool definitions sent to the model (JSON Schema describing each function)
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_current_time",
-            "description": "Get the current local date and time.",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "add_numbers",
-            "description": "Add two numbers and return the sum.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "a": {"type": "number", "description": "First number"},
-                    "b": {"type": "number", "description": "Second number"},
-                },
-                "required": ["a", "b"],
-            },
-        },
-    },
-]
+TOOLS = [get_current_time, add_numbers]
 
 
-def run_tool(name: str, arguments: str) -> str:
-    """Execute a tool call requested by the model and return the result as a string."""
-    func = AVAILABLE_TOOLS.get(name)
-    if func is None:
-        return f"Error: unknown tool '{name}'"
-    try:
-        args = json.loads(arguments or "{}")
-        return str(func(**args))
-    except Exception as e:
-        # Send errors back to the model so it can correct itself
-        return f"Error running {name}: {e}"
+# LangChain chat model; reads GROQ_API_KEY from the environment.
+# bind_tools converts the tool objects to JSON schemas and attaches them to every call
+llm = ChatGroq(model=MODEL, temperature=0)
+llm_with_tools = llm.bind_tools(TOOLS)
 
 
 # ---------------------------------------------------------------------------
-# Inner loop: one user turn, possibly several LLM calls if tools are used
+# Nodes: the steps of the graph
 # ---------------------------------------------------------------------------
 
-def run_agent_turn(messages: list) -> str:
-    for _ in range(MAX_TOOL_ITERATIONS):
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            tools=TOOLS,
-            temperature=0,
-        )
-        msg = response.choices[0].message
+def agent(state: MessagesState):
+    """Call the LLM with the conversation so far (replaces the API call in the loop)."""
+    # The system prompt is added on every call instead of being stored in state,
+    # so changing it takes effect without touching saved conversations
+    messages = [SystemMessage(content=SYSTEM_PROMPT)] + state["messages"]
+    response = llm_with_tools.invoke(messages)
+    # Returning a list *appends* to state["messages"] (the add_messages reducer)
+    return {"messages": [response]}
 
-        # No tool calls -> the model has produced its final answer
-        if not msg.tool_calls:
-            messages.append({"role": "assistant", "content": msg.content})
-            return msg.content
 
-        # The model wants tools: record its request in history...
-        messages.append(
-            {
-                "role": "assistant",
-                "content": msg.content,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in msg.tool_calls
-                ],
-            }
-        )
-
-        # ...then run each tool and append its result, linked by tool_call_id
-        for tc in msg.tool_calls:
-            print(f"  [tool call] {tc.function.name}({tc.function.arguments})")
-            result = run_tool(tc.function.name, tc.function.arguments)
-            print(f"  [tool result] {result}")
-            messages.append(
-                {"role": "tool", "tool_call_id": tc.id, "content": result}
-            )
-        # Loop again so the model can read the tool results
-
-    stop_msg = "Stopped: too many tool calls in one turn."
-    messages.append({"role": "assistant", "content": stop_msg})
-    return stop_msg
+# ToolNode runs every tool call in the last AIMessage and returns ToolMessages
+# with matching tool_call_ids; tool errors are sent back to the model as text
+# (replaces AVAILABLE_TOOLS, run_tool() and the tool-result loop)
+tool_node = ToolNode(TOOLS)
 
 
 # ---------------------------------------------------------------------------
-# Outer loop: the multi-turn chat. `messages` is the conversation memory.
+# Graph: nodes + edges form the inner loop
+#
+#   START -> agent --(tool calls?)--> tools -> agent ...
+#                 \--(no tool calls)--> END
+# ---------------------------------------------------------------------------
+
+builder = StateGraph(MessagesState)
+builder.add_node("agent", agent)
+builder.add_node("tools", tool_node)
+builder.add_edge(START, "agent")
+builder.add_conditional_edges("agent", tools_condition)  # replaces `if not msg.tool_calls`
+builder.add_edge("tools", "agent")                       # replaces "loop again"
+
+# The checkpointer saves state after every step, keyed by thread_id
+# (replaces keeping the messages list alive in main())
+graph = builder.compile(checkpointer=InMemorySaver())
+
+
+# ---------------------------------------------------------------------------
+# Outer loop: the multi-turn chat. History lives in the checkpointer.
 # ---------------------------------------------------------------------------
 
 def main():
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    config = {"configurable": {"thread_id": "chat-1"}, "recursion_limit": RECURSION_LIMIT}
     print("Chat started. Type 'exit' to quit, 'history' to see the messages list.\n")
 
     while True:
@@ -154,12 +113,29 @@ def main():
         if user_input.lower() in ("exit", "quit"):
             break
         if user_input.lower() == "history":
-            print(json.dumps(messages, indent=2))
+            # Read the saved state for this thread from the checkpointer
+            for m in graph.get_state(config).values.get("messages", []):
+                m.pretty_print()
             continue
 
-        messages.append({"role": "user", "content": user_input})
-        reply = run_agent_turn(messages)
-        print(f"Bot: {reply}\n")
+        # Only the NEW message is sent; earlier ones are loaded from the checkpointer
+        inputs = {"messages": [HumanMessage(content=user_input)]}
+        try:
+            # stream_mode="updates" yields each node's output as it runs,
+            # as {node_name: {"messages": [...]}}
+            for update in graph.stream(inputs, config, stream_mode="updates"):
+                for node, output in update.items():
+                    last = output["messages"][-1]
+                    if node == "agent" and last.tool_calls:
+                        for tc in last.tool_calls:
+                            print(f"  [tool call] {tc['name']}({tc['args']})")
+                    elif node == "tools":
+                        for m in output["messages"]:
+                            print(f"  [tool result] {m.content}")
+                    elif node == "agent":
+                        print(f"Bot: {last.content}\n")
+        except GraphRecursionError:
+            print("Bot: Stopped: too many tool calls in one turn.\n")
 
 
 if __name__ == "__main__":
