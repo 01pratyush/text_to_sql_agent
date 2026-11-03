@@ -7,3 +7,9 @@ venv/
 # Python cache
 __pycache__/
 *.pyc
+
+# Generated databases (rebuild with: python setup_db.py)
+data/
+
+# Log files (see log_config.py)
+logs/

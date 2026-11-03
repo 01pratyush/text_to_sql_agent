@@ -1,14 +1,20 @@
+import logging
 import sys
-from datetime import datetime
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.tools import tool
 from langchain_groq import ChatGroq
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
+
+from agent_callbacks import LoggingCallbackHandler
+from log_config import run_context, setup_logging
+from sql_tools import SQL_TOOLS
+from tracing import setup_tracing
+
+log = logging.getLogger("cli")
 
 load_dotenv()
 
@@ -16,41 +22,28 @@ load_dotenv()
 sys.stdout.reconfigure(encoding="utf-8")
 
 MODEL = "openai/gpt-oss-120b"
-# Safety limit for the inner loop. Counts graph steps (node runs), not loop
-# rounds: agent + tools = 2 steps per round, so 10 allows ~5 rounds
-RECURSION_LIMIT = 10
+# Safety limit on the agent <-> tools cycle within one user turn. Counts graph
+# steps (node runs), not rounds: agent + tools = 2 steps per round, so 25 allows
+# ~12 rounds (exploring the schema and fixing failed queries takes several)
+RECURSION_LIMIT = 25
 
-SYSTEM_PROMPT = (
-    "You are a helpful assistant. "
-    "Use the available tools when they help answer the question. "
-    "Be concise."
-)
+SYSTEM_PROMPT = """You are a data analyst answering questions about a DuckDB database \
+(the TPC-H benchmark: customers, orders, line items, parts, suppliers, nations, regions).
 
+How to work:
+1. If you don't already know the relevant tables, call list_tables, then describe_table
+   for the ones you need. Use the exact column names you see; don't guess them.
+2. Write one DuckDB SELECT query and run it with run_sql.
+3. If the query fails or the result looks wrong, read the error, fix the query, and retry.
+4. Results are capped at 50 rows, so aggregate in SQL or use ORDER BY ... LIMIT.
 
-# ---------------------------------------------------------------------------
-# Tools: @tool turns each function into a tool object and builds its JSON
-# schema from the name, type hints and docstring (replaces the TOOLS list)
-# ---------------------------------------------------------------------------
+Answer format:
+- Give the answer in plain language first.
+- Then show the final SQL query you used in a ```sql code block.
+- If the data can't answer the question, say so instead of guessing."""
 
-@tool
-def get_current_time() -> str:
-    """Get the current local date and time."""
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-# parse_docstring=True reads the Args: section into per-parameter descriptions
-@tool(parse_docstring=True)
-def add_numbers(a: float, b: float) -> float:
-    """Add two numbers and return the sum.
-
-    Args:
-        a: First number
-        b: Second number
-    """
-    return a + b
-
-
-TOOLS = [get_current_time, add_numbers]
+# The tools live in sql_tools.py: list_tables, describe_table, run_sql
+TOOLS = SQL_TOOLS
 
 
 # LangChain chat model; reads GROQ_API_KEY from the environment.
@@ -64,7 +57,7 @@ llm_with_tools = llm.bind_tools(TOOLS)
 # ---------------------------------------------------------------------------
 
 def agent(state: MessagesState):
-    """Call the LLM with the conversation so far (replaces the API call in the loop)."""
+    """Call the LLM with the conversation so far."""
     # The system prompt is added on every call instead of being stored in state,
     # so changing it takes effect without touching saved conversations
     messages = [SystemMessage(content=SYSTEM_PROMPT)] + state["messages"]
@@ -74,8 +67,10 @@ def agent(state: MessagesState):
 
 
 # ToolNode runs every tool call in the last AIMessage and returns ToolMessages
-# with matching tool_call_ids; tool errors are sent back to the model as text
-# (replaces AVAILABLE_TOOLS, run_tool() and the tool-result loop)
+# with matching tool_call_ids. By default it only catches invalid arguments
+# (sent back to the model as text); any other exception a tool raises stops
+# the graph, so the tools in sql_tools.py return expected errors (bad SQL,
+# unknown table) as strings instead of raising
 tool_node = ToolNode(TOOLS)
 
 
@@ -90,12 +85,22 @@ builder = StateGraph(MessagesState)
 builder.add_node("agent", agent)
 builder.add_node("tools", tool_node)
 builder.add_edge(START, "agent")
-builder.add_conditional_edges("agent", tools_condition)  # replaces `if not msg.tool_calls`
-builder.add_edge("tools", "agent")                       # replaces "loop again"
+builder.add_conditional_edges("agent", tools_condition)  # "tools" if tool calls, else END
+builder.add_edge("tools", "agent")                       # model reads the tool results
 
-# The checkpointer saves state after every step, keyed by thread_id
-# (replaces keeping the messages list alive in main())
+# The checkpointer saves state after every step, keyed by thread_id.
+# InMemorySaver keeps it in RAM, so history is lost when the program exits
 graph = builder.compile(checkpointer=InMemorySaver())
+
+
+def make_config(thread_id: str) -> dict:
+    """Run config for one conversation: its thread, the step limit, and the
+    logging callbacks (passed down to every LLM and tool call in the run)."""
+    return {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": RECURSION_LIMIT,
+        "callbacks": [LoggingCallbackHandler()],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -103,8 +108,12 @@ graph = builder.compile(checkpointer=InMemorySaver())
 # ---------------------------------------------------------------------------
 
 def main():
-    config = {"configurable": {"thread_id": "chat-1"}, "recursion_limit": RECURSION_LIMIT}
-    print("Chat started. Type 'exit' to quit, 'history' to see the messages list.\n")
+    setup_logging()
+    setup_tracing("text-to-sql-chat")
+    config = make_config("chat-1")
+    log.info("session_start", extra={"model": MODEL, "thread_id": "chat-1"})
+    print("Chat started. Type 'exit' to quit, 'history' to see the messages list.")
+    print("Tool calls are logged below each question (set LOG_LEVEL=WARNING to hide them).\n")
 
     while True:
         user_input = input("You: ").strip()
@@ -120,22 +129,21 @@ def main():
 
         # Only the NEW message is sent; earlier ones are loaded from the checkpointer
         inputs = {"messages": [HumanMessage(content=user_input)]}
-        try:
-            # stream_mode="updates" yields each node's output as it runs,
-            # as {node_name: {"messages": [...]}}
-            for update in graph.stream(inputs, config, stream_mode="updates"):
-                for node, output in update.items():
-                    last = output["messages"][-1]
-                    if node == "agent" and last.tool_calls:
-                        for tc in last.tool_calls:
-                            print(f"  [tool call] {tc['name']}({tc['args']})")
-                    elif node == "tools":
-                        for m in output["messages"]:
-                            print(f"  [tool result] {m.content}")
-                    elif node == "agent":
-                        print(f"Bot: {last.content}\n")
-        except GraphRecursionError:
-            print("Bot: Stopped: too many tool calls in one turn.\n")
+        # One run_id per turn: every LLM and tool event in this turn is tagged with it
+        with run_context() as run_id:
+            log.info("turn_start", extra={"question": user_input})
+            try:
+                # run_id in the metadata tags this turn's Phoenix trace, matching the logs
+                result = graph.invoke(inputs, {**config, "metadata": {"run_id": run_id}})
+                reply = result["messages"][-1].content
+                log.info("turn_end", extra={"status": "ok"})
+            except GraphRecursionError:
+                reply = "Stopped: too many tool calls in one turn."
+                log.warning("turn_end", extra={"status": "recursion_limit"})
+            except Exception:
+                log.exception("turn_end", extra={"status": "error"})
+                reply = "Sorry, something went wrong (details are in logs/agent.jsonl)."
+        print(f"Bot: {reply}\n")
 
 
 if __name__ == "__main__":
