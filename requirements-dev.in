@@ -1,0 +1,7 @@
+# Developer tools, not needed to run the agent. Regenerate the lock with:
+#   python -m piptools compile requirements-dev.in -o requirements-dev.txt
+
+# Keep shared dependencies at the same versions as the agent's lock
+-c requirements.txt
+
+pip-tools

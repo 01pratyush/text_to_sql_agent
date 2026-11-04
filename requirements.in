@@ -1,0 +1,16 @@
+# Packages the code imports directly. Edit this file, then regenerate the lock:
+#   python -m piptools compile requirements.in -o requirements.txt
+
+# Agent
+duckdb
+groq
+langchain-core
+langchain-groq
+langgraph
+python-dotenv
+
+# Tracing (tracing.py); the Phoenix server itself is installed separately with pipx
+openinference-instrumentation-langchain
+openinference-semantic-conventions
+opentelemetry-exporter-otlp-proto-http
+opentelemetry-sdk
