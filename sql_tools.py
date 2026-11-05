@@ -51,9 +51,19 @@ def _table_names(cur) -> list[str]:
     return [name for (name,) in cur.execute("SHOW TABLES").fetchall()]
 
 
+def schema_summary() -> str:
+    """Compact schema for the system prompt: one line per table, with column names and types."""
+    cur = _con.cursor()
+    lines = []
+    for name in _table_names(cur):
+        columns = cur.execute(f'DESCRIBE "{name}"').fetchall()
+        lines.append(f"{name}: " + ", ".join(f"{col[0]} {col[1]}" for col in columns))
+    return "\n".join(lines)
+
+
 @tool
 def list_tables() -> str:
-    """List all tables in the database with their row counts. Call this first to see what data exists."""
+    """List all tables in the database with their row counts."""
     cur = _con.cursor()
     lines = []
     for name in _table_names(cur):

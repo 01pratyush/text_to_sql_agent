@@ -54,6 +54,7 @@ class LoggingCallbackHandler(BaseCallbackHandler):
         usage = message.usage_metadata or {}
         tool_calls = [tc["name"] for tc in message.tool_calls]
         log.info("llm_end", extra={
+            "model": message.response_metadata.get("model_name"),
             "duration_ms": duration,
             "input_tokens": usage.get("input_tokens"),
             "output_tokens": usage.get("output_tokens"),

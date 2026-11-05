@@ -60,6 +60,8 @@ def _summarize(messages: list) -> dict:
         "sql": successful[-1] if successful else None,
         "answer": final.content if final else None,
         "sql_attempts": sql_attempts,
+        "models": sorted({m.response_metadata["model_name"] for m in ai_messages
+                          if "model_name" in m.response_metadata}),
         "llm_calls": len(ai_messages),
         "tool_calls": tool_calls,
         "input_tokens": sum(u.get("input_tokens", 0) for u in usage),
@@ -74,6 +76,7 @@ def run_agent(question: str) -> dict:
       status: "ok", "recursion_limit" or "error"
       sql: the last successfully executed run_sql query (None if there was none)
       answer: the final answer text (None if the agent never finished)
+      models: every model that answered during the run (shows if the fallback was used)
       sql_attempts, llm_calls, tool_calls, input_tokens, output_tokens, latency_s, error
     """
     # A new thread_id per question, so no question sees another's history.
@@ -116,6 +119,7 @@ def run_agent(question: str) -> dict:
         "status": status,
         "has_sql": summary["sql"] is not None,
         "sql_attempts": len(summary["sql_attempts"]),
+        "models": summary["models"],
         "llm_calls": summary["llm_calls"],
         "tool_calls": summary["tool_calls"],
         "latency_s": summary["latency_s"],

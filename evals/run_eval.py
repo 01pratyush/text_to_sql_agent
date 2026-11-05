@@ -29,7 +29,7 @@ from pathlib import Path
 from evals.agent_runner import run_agent
 from evals.compare import execution_match
 from log_config import run_context, setup_logging
-from main import MODEL, RECURSION_LIMIT, SYSTEM_PROMPT
+from main import FALLBACK_MODEL, MODEL, RECURSION_LIMIT, SYSTEM_PROMPT
 from tracing import setup_tracing
 
 log = logging.getLogger("evals.run_eval")
@@ -80,6 +80,11 @@ def print_summary(records: list[dict]) -> None:
     passed = sum(r["outcome"] == "pass" for r in records)
     print(f"\nExecution accuracy: {passed}/{total} ({passed / total:.1%})")
 
+    # The fallback model may score differently, so a mixed run isn't a clean MODEL result
+    fallback_runs = sum(FALLBACK_MODEL in r["models"] for r in records)
+    if fallback_runs:
+        print(f"  WARNING: {fallback_runs}/{total} attempts used {FALLBACK_MODEL} for at least one call")
+
     by_difficulty = defaultdict(lambda: [0, 0])
     for r in records:
         by_difficulty[r["difficulty"]][0] += r["outcome"] == "pass"
@@ -123,6 +128,7 @@ def main():
         "type": "meta",
         "started_at": datetime.now().isoformat(timespec="seconds"),
         "model": MODEL,
+        "fallback_model": FALLBACK_MODEL,
         # A short fingerprint of the system prompt, so runs with different prompts can be told apart
         "prompt_hash": hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()[:8],
         "git": git_version(),
@@ -168,8 +174,9 @@ def main():
                 out.flush()
 
                 mark = "✓" if outcome == "pass" else "✗"
+                fallback_note = " [fallback]" if FALLBACK_MODEL in run["models"] else ""
                 print(f"{mark} {q['id']:<5} run {repeat}  {outcome:<16} "
-                      f"{run['tool_calls']:>2} tools  {run['latency_s']:>6.1f}s  {reason[:70]}")
+                      f"{run['tool_calls']:>2} tools  {run['latency_s']:>6.1f}s  {reason[:70]}{fallback_note}")
                 time.sleep(args.pause)
 
     passed = sum(r["outcome"] == "pass" for r in records)
