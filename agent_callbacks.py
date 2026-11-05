@@ -61,7 +61,8 @@ class LoggingCallbackHandler(BaseCallbackHandler):
             # Either the tools the model asked for, or a final answer
             "decision": f"call {', '.join(tool_calls)}" if tool_calls else "final answer",
         })
-        log.debug("llm_output", extra={"content": message.content, "tool_calls": message.tool_calls})
+        # .text leaves out Gemini's content blocks and thought signatures
+        log.debug("llm_output", extra={"content": message.text, "tool_calls": message.tool_calls})
 
     def on_llm_error(self, error, *, run_id, **kwargs):
         log.error("llm_error", extra={

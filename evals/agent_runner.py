@@ -10,8 +10,8 @@ import sys
 import time
 import uuid
 
-import groq
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_google_genai.chat_models import GoogleRateLimitError
 from langgraph.errors import GraphRecursionError
 
 from log_config import current_run_id
@@ -58,7 +58,8 @@ def _summarize(messages: list) -> dict:
     usage = [m.usage_metadata or {} for m in ai_messages]
     return {
         "sql": successful[-1] if successful else None,
-        "answer": final.content if final else None,
+        # .text, because Gemini 3 returns .content as a list of blocks
+        "answer": final.text if final else None,
         "sql_attempts": sql_attempts,
         "models": sorted({m.response_metadata["model_name"] for m in ai_messages
                           if "model_name" in m.response_metadata}),
@@ -76,7 +77,7 @@ def run_agent(question: str) -> dict:
       status: "ok", "recursion_limit" or "error"
       sql: the last successfully executed run_sql query (None if there was none)
       answer: the final answer text (None if the agent never finished)
-      models: every model that answered during the run (shows if the fallback was used)
+      models: every model that answered during the run
       sql_attempts, llm_calls, tool_calls, input_tokens, output_tokens, latency_s, error
     """
     # A new thread_id per question, so no question sees another's history.
@@ -96,7 +97,7 @@ def run_agent(question: str) -> dict:
         except GraphRecursionError:
             status, error = "recursion_limit", f"hit recursion_limit={RECURSION_LIMIT}"
             break
-        except groq.RateLimitError as e:
+        except GoogleRateLimitError as e:
             if attempt == RATE_LIMIT_RETRIES:
                 status, error = "error", f"rate limited: {e}"
                 break

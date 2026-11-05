@@ -1,10 +1,9 @@
 import logging
 import sys
 
-import groq
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import START, MessagesState, StateGraph
@@ -22,9 +21,9 @@ load_dotenv()
 # Windows consoles default to cp1252, which can't print some characters LLMs emit
 sys.stdout.reconfigure(encoding="utf-8")
 
-MODEL = "openai/gpt-oss-120b"
-# Used for a call when MODEL hits a Groq rate limit (limits are per model)
-FALLBACK_MODEL = "openai/gpt-oss-20b"
+MODEL = "gemini-3.5-flash-lite"
+LLM_TIMEOUT_S = 60
+LLM_MAX_RETRIES = 2
 # Safety limit on the agent <-> tools cycle within one user turn. Counts graph
 # steps (node runs), not rounds: agent + tools = 2 steps per round, so 25 allows
 # ~12 rounds (exploring the schema and fixing failed queries takes several)
@@ -55,18 +54,15 @@ Database schema:
 TOOLS = SQL_TOOLS
 
 
-def make_llm(model: str):
-    """LangChain chat model; reads GROQ_API_KEY from the environment.
-    bind_tools converts the tool objects to JSON schemas and attaches them to every call."""
-    return ChatGroq(model=model, temperature=0).bind_tools(TOOLS)
-
-
-# Each call starts on MODEL and switches only on a rate limit. Other errors
-# (bad request, auth) are raised, since another model wouldn't fix them
-llm_with_tools = make_llm(MODEL).with_fallbacks(
-    [make_llm(FALLBACK_MODEL)],
-    exceptions_to_handle=(groq.RateLimitError,),
-)
+# LangChain chat model; reads GOOGLE_API_KEY from the environment.
+# bind_tools converts the tool objects to JSON schemas and attaches them to every call.
+# No temperature: this model ignores it. The timeout and retry limit make an overloaded
+# model fail with an error, because by default the client has no timeout and retries silently
+llm_with_tools = ChatGoogleGenerativeAI(
+    model=MODEL,
+    timeout=LLM_TIMEOUT_S,
+    max_retries=LLM_MAX_RETRIES,
+).bind_tools(TOOLS)
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +148,8 @@ def main():
             try:
                 # run_id in the metadata tags this turn's Phoenix trace, matching the logs
                 result = graph.invoke(inputs, {**config, "metadata": {"run_id": run_id}})
-                reply = result["messages"][-1].content
+                # .text, because Gemini 3 returns .content as a list of blocks
+                reply = result["messages"][-1].text
                 log.info("turn_end", extra={"status": "ok"})
             except GraphRecursionError:
                 reply = "Stopped: too many tool calls in one turn."
