@@ -2,7 +2,7 @@
 
 Pick one with the LLM_PROVIDER environment variable (default: groq):
 
-    $env:LLM_PROVIDER = "groq"; python main.py
+    $env:LLM_PROVIDER = "cerebras"; python -m evals.run_eval
 
 To add a provider, add an entry to PROVIDERS. Provider-specific model settings
 go in its model_kwargs.
@@ -12,6 +12,8 @@ import os
 from dataclasses import dataclass, field
 
 import groq
+import openai
+from langchain_cerebras import ChatCerebras
 from langchain_core.language_models import BaseChatModel
 from langchain_core.rate_limiters import InMemoryRateLimiter
 from langchain_groq import ChatGroq
@@ -53,6 +55,18 @@ PROVIDERS = {
         # Groq's rate limits are per model, so the smaller model is often still available
         fallback_model="openai/gpt-oss-20b",
         rate_limit_errors=(groq.RateLimitError,),
+        model_kwargs={"temperature": 0},
+    ),
+    # Mostly for evals: a high daily token limit but few requests per minute.
+    # No fallback, so a run's score comes from one model only
+    "cerebras": ProviderConfig(
+        name="cerebras",
+        chat_class=ChatCerebras,
+        model="gpt-oss-120b",
+        # The limit is 5; slightly lower so calls can't land 6 in a rolling minute
+        requests_per_min=4.5,
+        # ChatCerebras is built on the OpenAI client, so it raises OpenAI's errors
+        rate_limit_errors=(openai.RateLimitError,),
         model_kwargs={"temperature": 0},
     ),
 }
