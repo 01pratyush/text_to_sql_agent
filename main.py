@@ -1,16 +1,15 @@
 import logging
 import sys
 
-import groq
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_groq import ChatGroq
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from agent_callbacks import LoggingCallbackHandler
+from llm_config import build_llm, get_provider_config
 from log_config import run_context, setup_logging
 from sql_tools import SQL_TOOLS, schema_summary
 from tracing import setup_tracing
@@ -22,9 +21,8 @@ load_dotenv()
 # Windows consoles default to cp1252, which can't print some characters LLMs emit
 sys.stdout.reconfigure(encoding="utf-8")
 
-MODEL = "openai/gpt-oss-120b"
-# Used for a call when MODEL hits a Groq rate limit (limits are per model)
-FALLBACK_MODEL = "openai/gpt-oss-20b"
+# Which provider and models to use: see llm_config.py
+LLM_CONFIG = get_provider_config()
 # Safety limit on the agent <-> tools cycle within one user turn. Counts graph
 # steps (node runs), not rounds: agent + tools = 2 steps per round, so 25 allows
 # ~12 rounds (exploring the schema and fixing failed queries takes several)
@@ -55,18 +53,7 @@ Database schema:
 TOOLS = SQL_TOOLS
 
 
-def make_llm(model: str):
-    """LangChain chat model; reads GROQ_API_KEY from the environment.
-    bind_tools converts the tool objects to JSON schemas and attaches them to every call."""
-    return ChatGroq(model=model, temperature=0).bind_tools(TOOLS)
-
-
-# Each call starts on MODEL and switches only on a rate limit. Other errors
-# (bad request, auth) are raised, since another model wouldn't fix them
-llm_with_tools = make_llm(MODEL).with_fallbacks(
-    [make_llm(FALLBACK_MODEL)],
-    exceptions_to_handle=(groq.RateLimitError,),
-)
+llm_with_tools = build_llm(LLM_CONFIG, TOOLS)
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +115,7 @@ def main():
     setup_logging()
     setup_tracing("text-to-sql-chat")
     config = make_config("chat-1")
-    log.info("session_start", extra={"model": MODEL, "thread_id": "chat-1"})
+    log.info("session_start", extra={"provider": LLM_CONFIG.name, "model": LLM_CONFIG.model, "thread_id": "chat-1"})
     print("Chat started. Type 'exit' to quit, 'history' to see the messages list.")
     print("Tool calls are logged below each question (set LOG_LEVEL=WARNING to hide them).\n")
 
