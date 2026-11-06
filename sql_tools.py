@@ -63,7 +63,7 @@ def schema_summary() -> str:
 
 @tool
 def list_tables() -> str:
-    """List all tables in the database with their row counts."""
+    """List all tables in the database with their row counts. Call this first to see what data exists."""
     cur = _con.cursor()
     lines = []
     for name in _table_names(cur):

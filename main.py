@@ -12,7 +12,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 
 from agent_callbacks import LoggingCallbackHandler
 from log_config import run_context, setup_logging
-from sql_tools import SQL_TOOLS, schema_summary
+from sql_tools import SQL_TOOLS
 from tracing import setup_tracing
 
 log = logging.getLogger("cli")
@@ -33,26 +33,20 @@ LLM_MAX_RETRIES = 2
 # ~12 rounds (exploring the schema and fixing failed queries takes several)
 RECURSION_LIMIT = 25
 
-SYSTEM_PROMPT = f"""You are a data analyst answering questions about a DuckDB database \
+SYSTEM_PROMPT = """You are a data analyst answering questions about a DuckDB database \
 (the TPC-H benchmark: customers, orders, line items, parts, suppliers, nations, regions).
 
 How to work:
-1. The database schema is below, so don't call list_tables or describe_table just to
-   learn it. Use the exact column names shown. Call describe_table only when you need
-   example values from a table.
-2. Write one DuckDB SELECT query and run it with run_sql. You must do this before
-   answering: SQL written in your reply is not executed and gives the user no answer.
+1. If you don't already know the relevant tables, call list_tables, then describe_table
+   for the ones you need. Use the exact column names you see; don't guess them.
+2. Write one DuckDB SELECT query and run it with run_sql.
 3. If the query fails or the result looks wrong, read the error, fix the query, and retry.
 4. Results are capped at 50 rows, so aggregate in SQL or use ORDER BY ... LIMIT.
 
 Answer format:
-- Give the answer in plain language first, stating the actual values from the run_sql result.
-  Never state a number or fact that didn't come from a tool result.
-- Then show the final SQL query you ran, exactly as you ran it, in a ```sql code block.
-- If the data can't answer the question, say so instead of guessing.
-
-Database schema:
-{schema_summary()}"""
+- Give the answer in plain language first.
+- Then show the final SQL query you used in a ```sql code block.
+- If the data can't answer the question, say so instead of guessing."""
 
 # The tools live in sql_tools.py: list_tables, describe_table, run_sql
 TOOLS = SQL_TOOLS
