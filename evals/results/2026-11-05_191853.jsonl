@@ -1,0 +1,1 @@
+{"type": "meta", "started_at": "2026-11-05T19:18:53", "model": "openai/gpt-oss-120b", "prompt_hash": "e7a8ffb4", "git": "6a452b4-dirty", "recursion_limit": 25, "repeats": 1, "question_ids": ["t03"]}

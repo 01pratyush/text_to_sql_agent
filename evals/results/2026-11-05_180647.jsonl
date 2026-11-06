@@ -1,0 +1,2 @@
+{"type": "meta", "started_at": "2026-11-05T18:06:46", "model": "openai/gpt-oss-120b", "prompt_hash": "e7a8ffb4", "git": "6a452b4-dirty", "recursion_limit": 25, "repeats": 1, "question_ids": ["c02"]}
+{"type": "result", "id": "c02", "run_id": "c02-r1", "repeat": 1, "difficulty": "easy", "source": "custom", "outcome": "api_error", "reason": "APIConnectionError: Connection error.", "sql": null, "answer": null, "sql_attempts": [], "llm_calls": 0, "tool_calls": 0, "input_tokens": 0, "output_tokens": 0, "latency_s": 1.46, "error": "APIConnectionError: Connection error."}
