@@ -29,7 +29,7 @@ from pathlib import Path
 from evals.agent_runner import run_agent
 from evals.compare import execution_match
 from log_config import run_context, setup_logging
-from main import FALLBACK_MODEL, MODEL, RECURSION_LIMIT, SYSTEM_PROMPT
+from main import LLM_CONFIG, RECURSION_LIMIT, SYSTEM_PROMPT
 from tracing import setup_tracing
 
 log = logging.getLogger("evals.run_eval")
@@ -80,10 +80,10 @@ def print_summary(records: list[dict]) -> None:
     passed = sum(r["outcome"] == "pass" for r in records)
     print(f"\nExecution accuracy: {passed}/{total} ({passed / total:.1%})")
 
-    # The fallback model may score differently, so a mixed run isn't a clean MODEL result
-    fallback_runs = sum(FALLBACK_MODEL in r["models"] for r in records)
+    # The fallback model may score differently, so a mixed run isn't a clean result for the main model
+    fallback_runs = sum(LLM_CONFIG.fallback_model in r["models"] for r in records)
     if fallback_runs:
-        print(f"  WARNING: {fallback_runs}/{total} attempts used {FALLBACK_MODEL} for at least one call")
+        print(f"  WARNING: {fallback_runs}/{total} attempts used {LLM_CONFIG.fallback_model} for at least one call")
 
     by_difficulty = defaultdict(lambda: [0, 0])
     for r in records:
@@ -101,6 +101,9 @@ def print_summary(records: list[dict]) -> None:
     avg = lambda key: sum(r[key] for r in records) / total
     print(f"  per question: {avg('tool_calls'):.1f} tool calls · {avg('llm_calls'):.1f} LLM calls · "
           f"{avg('input_tokens') + avg('output_tokens'):,.0f} tokens · {avg('latency_s'):.1f}s")
+    if LLM_CONFIG.requests_per_min:
+        print(f"  NOTE: latency includes waits from the {LLM_CONFIG.requests_per_min:g} requests/min throttle, "
+              "so it isn't comparable across providers")
 
     # Per-question view; with --repeats this shows how consistent each question is
     print("\n  id    passed  outcomes")
@@ -118,7 +121,7 @@ def main():
     parser.add_argument("--ids", help="Comma-separated question ids to run (default: all)")
     parser.add_argument("--repeats", type=int, default=1, help="Runs per question (default: 1)")
     parser.add_argument("--pause", type=float, default=2.0,
-                        help="Seconds to wait between questions, to ease Groq rate limits (default: 2)")
+                        help="Seconds to wait between questions, to ease provider rate limits (default: 2)")
     args = parser.parse_args()
     setup_logging(console_level=os.environ.get("LOG_LEVEL", "WARNING"))
     setup_tracing("text-to-sql-evals")
@@ -127,8 +130,7 @@ def main():
     meta = {
         "type": "meta",
         "started_at": datetime.now().isoformat(timespec="seconds"),
-        "model": MODEL,
-        "fallback_model": FALLBACK_MODEL,
+        **LLM_CONFIG.describe(),
         # A short fingerprint of the system prompt, so runs with different prompts can be told apart
         "prompt_hash": hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()[:8],
         "git": git_version(),
@@ -139,7 +141,7 @@ def main():
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out_path = RESULTS_DIR / f"{datetime.now():%Y-%m-%d_%H%M%S}.jsonl"
-    print(f"Running {len(questions)} question(s) x {args.repeats} on {MODEL} "
+    print(f"Running {len(questions)} question(s) x {args.repeats} on {LLM_CONFIG.name}/{LLM_CONFIG.model} "
           f"(prompt {meta['prompt_hash']}, git {meta['git']})")
     print(f"Saving to {out_path}\n")
     log.info("eval_start", extra={**{k: v for k, v in meta.items() if k != "type"}, "results_file": str(out_path)})
@@ -174,7 +176,7 @@ def main():
                 out.flush()
 
                 mark = "✓" if outcome == "pass" else "✗"
-                fallback_note = " [fallback]" if FALLBACK_MODEL in run["models"] else ""
+                fallback_note = " [fallback]" if LLM_CONFIG.fallback_model in run["models"] else ""
                 print(f"{mark} {q['id']:<5} run {repeat}  {outcome:<16} "
                       f"{run['tool_calls']:>2} tools  {run['latency_s']:>6.1f}s  {reason[:70]}{fallback_note}")
                 time.sleep(args.pause)

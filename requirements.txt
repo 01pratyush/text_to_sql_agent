@@ -12,6 +12,7 @@ anyio==4.15.1
     #   httpx
     #   httpx2
     #   langsmith
+    #   openai
 certifi==2026.10.23
     # via
     #   httpcore
@@ -19,10 +20,13 @@ certifi==2026.10.23
     #   requests
 charset-normalizer==3.5.2
     # via requests
+colorama==0.4.6
+    # via tqdm
 distro==1.9.0
     # via
     #   groq
     #   langsmith
+    #   openai
 duckdb==1.5.6
     # via -r requirements.in
 exceptiongroup==1.3.1
@@ -46,6 +50,7 @@ httpx==0.28.1
     #   groq
     #   langchain-core
     #   langgraph-sdk
+    #   openai
 httpx2==2.13.1
     # via langsmith
 idna==3.20
@@ -54,20 +59,28 @@ idna==3.20
     #   httpx
     #   httpx2
     #   requests
+jiter==0.18.0
+    # via openai
 jsonpatch==1.35
     # via langchain-core
 jsonpointer==3.2.1
     # via jsonpatch
+langchain-cerebras==0.6.0
+    # via -r requirements.in
 langchain-core==1.6.12
     # via
     #   -r requirements.in
+    #   langchain-cerebras
     #   langchain-groq
+    #   langchain-openai
     #   langgraph
     #   langgraph-checkpoint
     #   langgraph-prebuilt
     #   langgraph-sdk
 langchain-groq==1.1.3
     # via -r requirements.in
+langchain-openai==0.3.34
+    # via langchain-cerebras
 langchain-protocol==0.0.19
     # via
     #   langchain-core
@@ -84,6 +97,10 @@ langgraph-sdk==0.4.8
     # via langgraph
 langsmith==0.14.11
     # via langchain-core
+openai==2.54.0
+    # via
+    #   -r requirements.in
+    #   langchain-openai
 openinference-instrumentation==0.1.75
     # via openinference-instrumentation-langchain
 openinference-instrumentation-langchain==0.1.81
@@ -148,26 +165,35 @@ pydantic==2.14.1
     #   langchain-core
     #   langgraph
     #   langsmith
+    #   openai
 pydantic-core==2.50.1
     # via pydantic
 python-dotenv==1.2.4
     # via -r requirements.in
 pyyaml==6.0.3
     # via langchain-core
+regex==2026.9.29
+    # via tiktoken
 requests==2.34.2
     # via
     #   langsmith
     #   opentelemetry-exporter-http-transport
     #   opentelemetry-exporter-otlp-proto-http
     #   requests-toolbelt
+    #   tiktoken
 requests-toolbelt==1.0.0
     # via langsmith
 sniffio==1.3.1
     # via
     #   groq
     #   langsmith
+    #   openai
 tenacity==9.1.4
     # via langchain-core
+tiktoken==0.14.0
+    # via langchain-openai
+tqdm==4.70.1
+    # via openai
 truststore==0.10.5
     # via
     #   httpcore2
@@ -181,6 +207,7 @@ typing-extensions==4.16.0
     #   langchain-core
     #   langchain-protocol
     #   langsmith
+    #   openai
     #   opentelemetry-api
     #   opentelemetry-exporter-otlp-proto-http
     #   opentelemetry-sdk

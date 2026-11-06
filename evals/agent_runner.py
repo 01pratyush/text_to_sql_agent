@@ -10,12 +10,11 @@ import sys
 import time
 import uuid
 
-import groq
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.errors import GraphRecursionError
 
 from log_config import current_run_id
-from main import RECURSION_LIMIT, graph, make_config
+from main import LLM_CONFIG, RECURSION_LIMIT, graph, make_config
 
 log = logging.getLogger("evals.agent_runner")
 
@@ -96,7 +95,7 @@ def run_agent(question: str) -> dict:
         except GraphRecursionError:
             status, error = "recursion_limit", f"hit recursion_limit={RECURSION_LIMIT}"
             break
-        except groq.RateLimitError as e:
+        except LLM_CONFIG.rate_limit_errors as e:
             if attempt == RATE_LIMIT_RETRIES:
                 status, error = "error", f"rate limited: {e}"
                 break

@@ -9,7 +9,9 @@ build==1.6.1
 click==8.5.0
     # via pip-tools
 colorama==0.4.6
-    # via build
+    # via
+    #   -c requirements.txt
+    #   build
 packaging==26.3
     # via
     #   -c requirements.txt

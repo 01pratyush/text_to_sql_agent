@@ -8,6 +8,8 @@ langchain-core
 langchain-groq
 langgraph
 python-dotenv
+langchain-cerebras
+openai
 
 # Tracing (tracing.py); the Phoenix server itself is installed separately with pipx
 openinference-instrumentation-langchain

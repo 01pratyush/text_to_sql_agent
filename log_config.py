@@ -113,7 +113,7 @@ def setup_logging(console_level: str | None = None) -> None:
         root.addHandler(handler)
 
     # Libraries that log every HTTP request; their warnings still come through
-    for noisy in ("httpx", "httpcore", "groq", "urllib3"):
+    for noisy in ("httpx", "httpcore", "groq", "openai", "urllib3"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     root._text_to_sql_configured = True
