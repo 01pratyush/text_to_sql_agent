@@ -4,6 +4,7 @@ import sys
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_genai.chat_models import GoogleAPIError, GoogleRateLimitError
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import START, MessagesState, StateGraph
@@ -22,6 +23,9 @@ load_dotenv()
 sys.stdout.reconfigure(encoding="utf-8")
 
 MODEL = "gemini-3.5-flash-lite"
+# Used for a call when MODEL hits a rate limit (limits are per model) or a Google
+# server error, such as 503 "high demand"
+FALLBACK_MODEL = "gemini-3.1-flash-lite"
 LLM_TIMEOUT_S = 60
 LLM_MAX_RETRIES = 2
 # Safety limit on the agent <-> tools cycle within one user turn. Counts graph
@@ -54,15 +58,24 @@ Database schema:
 TOOLS = SQL_TOOLS
 
 
-# LangChain chat model; reads GOOGLE_API_KEY from the environment.
-# bind_tools converts the tool objects to JSON schemas and attaches them to every call.
-# No temperature: this model ignores it. The timeout and retry limit make an overloaded
-# model fail with an error, because by default the client has no timeout and retries silently
-llm_with_tools = ChatGoogleGenerativeAI(
-    model=MODEL,
-    timeout=LLM_TIMEOUT_S,
-    max_retries=LLM_MAX_RETRIES,
-).bind_tools(TOOLS)
+def make_llm(model: str):
+    """LangChain chat model; reads GOOGLE_API_KEY from the environment.
+    bind_tools converts the tool objects to JSON schemas and attaches them to every call.
+    No temperature: MODEL ignores it. The timeout and retry limit make an overloaded
+    model fail with an error, because by default the client has no timeout and retries silently."""
+    return ChatGoogleGenerativeAI(
+        model=model,
+        timeout=LLM_TIMEOUT_S,
+        max_retries=LLM_MAX_RETRIES,
+    ).bind_tools(TOOLS)
+
+
+# Each call starts on MODEL and switches only on a rate limit or a Google server error
+# (5xx). Other errors (bad request, auth) are raised, since another model wouldn't fix them
+llm_with_tools = make_llm(MODEL).with_fallbacks(
+    [make_llm(FALLBACK_MODEL)],
+    exceptions_to_handle=(GoogleRateLimitError, GoogleAPIError),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +139,7 @@ def main():
     config = make_config("chat-1")
     log.info("session_start", extra={"model": MODEL, "thread_id": "chat-1"})
     print("Chat started. Type 'exit' to quit, 'history' to see the messages list.")
-    print("Tool calls are logged below each question (set LOG_LEVEL=WARNING to hide them).\n")
+    print("Every LLM and tool call is saved to logs/agent.jsonl (set LOG_LEVEL=INFO to see them here).\n")
 
     while True:
         user_input = input("You: ").strip()

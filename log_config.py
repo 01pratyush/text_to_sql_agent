@@ -6,7 +6,7 @@ Every log call uses an event name as the message plus structured fields:
 
 Two outputs:
   - logs/agent.jsonl : every event at DEBUG and above, one JSON object per line
-  - console          : readable lines at LOG_LEVEL (env var, default INFO)
+  - console          : readable lines at LOG_LEVEL (env var, default WARNING)
 
 Every event carries the current run_id (one per chat turn or eval question),
 so the file can be filtered to everything that happened in one run.
@@ -105,7 +105,7 @@ def setup_logging(console_level: str | None = None) -> None:
     # and can't print characters like "⏎" or ones in LLM output
     sys.stderr.reconfigure(encoding="utf-8")
     console = logging.StreamHandler()
-    console.setLevel((console_level or os.environ.get("LOG_LEVEL", "INFO")).upper())
+    console.setLevel((console_level or os.environ.get("LOG_LEVEL", "WARNING")).upper())
     console.setFormatter(ConsoleFormatter())
 
     for handler in (file_handler, console):

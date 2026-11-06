@@ -28,6 +28,8 @@ class LoggingCallbackHandler(BaseCallbackHandler):
         # Start time and tool name per callback run_id, to compute durations on *_end
         self._started: dict[UUID, float] = {}
         self._tool_names: dict[UUID, str] = {}
+        # Requested model per callback run_id, because some errors (e.g. 503) don't name it
+        self._models: dict[UUID, str | None] = {}
 
     def _elapsed_ms(self, run_id: UUID) -> int | None:
         start = self._started.pop(run_id, None)
@@ -46,10 +48,13 @@ class LoggingCallbackHandler(BaseCallbackHandler):
 
     def on_chat_model_start(self, serialized, messages, *, run_id, **kwargs):
         self._started[run_id] = time.perf_counter()
-        log.debug("llm_start", extra={"message_count": len(messages[0])})
+        model = (kwargs.get("metadata") or {}).get("ls_model_name")
+        self._models[run_id] = model
+        log.debug("llm_start", extra={"model": model, "message_count": len(messages[0])})
 
     def on_llm_end(self, response, *, run_id, **kwargs):
         duration = self._elapsed_ms(run_id)
+        self._models.pop(run_id, None)
         message = response.generations[0][0].message
         usage = message.usage_metadata or {}
         tool_calls = [tc["name"] for tc in message.tool_calls]
@@ -66,6 +71,7 @@ class LoggingCallbackHandler(BaseCallbackHandler):
 
     def on_llm_error(self, error, *, run_id, **kwargs):
         log.error("llm_error", extra={
+            "model": self._models.pop(run_id, None),
             "duration_ms": self._elapsed_ms(run_id),
             "error": f"{type(error).__name__}: {error}",
         })

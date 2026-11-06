@@ -77,7 +77,7 @@ def run_agent(question: str) -> dict:
       status: "ok", "recursion_limit" or "error"
       sql: the last successfully executed run_sql query (None if there was none)
       answer: the final answer text (None if the agent never finished)
-      models: every model that answered during the run
+      models: every model that answered during the run (shows if the fallback was used)
       sql_attempts, llm_calls, tool_calls, input_tokens, output_tokens, latency_s, error
     """
     # A new thread_id per question, so no question sees another's history.
