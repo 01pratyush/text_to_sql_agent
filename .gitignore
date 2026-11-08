@@ -13,3 +13,7 @@ data/
 
 # Log files (see log_config.py)
 logs/
+
+# Eval results; commit a run worth keeping with: git add -f evals/results/<file>
+evals/results/
+

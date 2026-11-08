@@ -30,6 +30,7 @@ from evals.agent_runner import run_agent
 from evals.compare import execution_match
 from log_config import run_context, setup_logging
 from main import LLM_CONFIG, RECURSION_LIMIT, SYSTEM_PROMPT
+from setup_db import db_info
 from tracing import setup_tracing
 
 log = logging.getLogger("evals.run_eval")
@@ -134,6 +135,9 @@ def main():
         # A short fingerprint of the system prompt, so runs with different prompts can be told apart
         "prompt_hash": hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()[:8],
         "git": git_version(),
+        # The database isn't in git and can be rebuilt at another scale factor,
+        # which changes every count and sum, so record which one was used
+        "db": db_info(),
         "recursion_limit": RECURSION_LIMIT,
         "repeats": args.repeats,
         "question_ids": [q["id"] for q in questions],
